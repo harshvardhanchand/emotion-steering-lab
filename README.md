@@ -61,6 +61,14 @@ uv run python -m art.cli ui
 
 `art ui` now launches Streamlit with watcher disabled and error-level logs by default to suppress optional `torchvision` import noise from `transformers`.
 
+If you use editable installs (`./scripts/setup.sh dev`) on macOS and hit `ModuleNotFoundError: No module named 'art'`, re-run setup once:
+
+```bash
+./scripts/setup.sh dev
+```
+
+The setup script now clears macOS hidden flags on venv `.pth` files so Python can load the local package path correctly.
+
 ## Run On Cloud VM In 5 Commands
 
 ```bash
