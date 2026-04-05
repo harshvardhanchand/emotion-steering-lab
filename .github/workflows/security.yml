@@ -63,7 +63,7 @@ jobs:
               deps.extend(values)
 
           deduped = list(dict.fromkeys(str(dep).strip() for dep in deps if str(dep).strip()))
-          Path("requirements-ci.txt").write_text("\\n".join(deduped) + "\\n", encoding="utf-8")
+          Path("requirements-ci.txt").write_text("\n".join(deduped) + "\n", encoding="utf-8")
           PY
 
       - name: Audit dependencies
