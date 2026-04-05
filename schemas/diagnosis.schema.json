@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "emotion_steering_lab/schemas/diagnosis.schema.json",
+  "title": "Emotion Steering Lab Diagnosis Record",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/sample_record"
+    },
+    {
+      "$ref": "#/$defs/comparison_summary_record"
+    }
+  ],
+  "$defs": {
+    "probe_score_map": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "sample_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "run_id",
+        "scenario_id",
+        "category",
+        "seed",
+        "failure",
+        "final_severity",
+        "selected_layer",
+        "positions",
+        "trajectory_selected_layer"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "record_type": {
+          "type": "string",
+          "const": "sample"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "scenario_id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "failure": {
+          "type": "boolean"
+        },
+        "final_severity": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "selected_layer": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "positions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "user_end",
+            "assistant_colon",
+            "assistant_response_mean_20"
+          ],
+          "properties": {
+            "user_end": {
+              "$ref": "#/$defs/probe_score_map"
+            },
+            "assistant_colon": {
+              "$ref": "#/$defs/probe_score_map"
+            },
+            "assistant_response_mean_20": {
+              "$ref": "#/$defs/probe_score_map"
+            }
+          }
+        },
+        "trajectory_selected_layer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "token_indices",
+            "scores_by_probe"
+          ],
+          "properties": {
+            "token_indices": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "scores_by_probe": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "layer_position_matrix": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "layer",
+              "position_scores"
+            ],
+            "properties": {
+              "layer": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "position_scores": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/$defs/probe_score_map"
+                }
+              }
+            }
+          }
+        },
+        "reproducibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "created_at",
+            "config_hash",
+            "model_hash"
+          ],
+          "properties": {
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "config_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "model_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "comparison_summary_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "run_id",
+        "category",
+        "failed_count",
+        "passed_count",
+        "feature_deltas"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "record_type": {
+          "type": "string",
+          "const": "comparison_summary"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "feature_deltas": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "user_end_delta",
+              "assistant_colon_delta",
+              "assistant_response_mean_20_delta"
+            ],
+            "properties": {
+              "user_end_delta": {
+                "type": "number"
+              },
+              "assistant_colon_delta": {
+                "type": "number"
+              },
+              "assistant_response_mean_20_delta": {
+                "type": "number"
+              },
+              "first20_slope_delta": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "reproducibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "created_at",
+            "config_hash",
+            "model_hash"
+          ],
+          "properties": {
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "config_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "model_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

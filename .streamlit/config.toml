@@ -1,0 +1,7 @@
+[server]
+# Avoid Streamlit watcher importing optional transformers vision modules,
+# which can produce noisy torchvision errors in text-only setups.
+fileWatcherType = "none"
+
+[logger]
+level = "error"

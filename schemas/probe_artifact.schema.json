@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "emotion_steering_lab/schemas/probe_artifact.schema.json",
+  "title": "Emotion Steering Lab Probe Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "created_at",
+    "model",
+    "method",
+    "dataset_spec",
+    "extraction_config",
+    "preprocessing_config",
+    "training_config",
+    "layer_selection",
+    "calibration",
+    "probes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_id",
+        "tokenizer_id",
+        "num_layers",
+        "hidden_size"
+      ],
+      "properties": {
+        "model_id": {
+          "type": "string"
+        },
+        "tokenizer_id": {
+          "type": "string"
+        },
+        "model_sha": {
+          "type": "string"
+        },
+        "num_layers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hidden_size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "paper"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "story_mean_difference",
+            "mixed_logistic_regression"
+          ]
+        },
+        "paper": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    },
+    "dataset_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "num_topics",
+        "stories_per_topic_per_emotion",
+        "pooling_min_token_index"
+      ],
+      "properties": {
+        "num_topics": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stories_per_topic_per_emotion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "emotion_labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pooling_min_token_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "neutral_dataset_id": {
+          "type": "string"
+        }
+      }
+    },
+    "extraction_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layers_mode",
+        "token_positions_for_diagnosis",
+        "pooling"
+      ],
+      "properties": {
+        "layers_mode": {
+          "type": "string",
+          "enum": [
+            "all_layers",
+            "central_14_layers",
+            "specific_layers"
+          ]
+        },
+        "specific_layers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "central_14_layers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "token_positions_for_diagnosis": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "user_end",
+              "assistant_colon",
+              "assistant_response_mean_20"
+            ]
+          }
+        },
+        "pooling": {
+          "type": "string",
+          "enum": [
+            "mean_over_tokens_ge_min_index",
+            "speaker_turn_mean"
+          ]
+        }
+      }
+    },
+    "preprocessing_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subtract_mean_across_emotions",
+        "neutral_pc_removal"
+      ],
+      "properties": {
+        "subtract_mean_across_emotions": {
+          "type": "boolean"
+        },
+        "neutral_pc_removal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "variance_explained_target"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "variance_explained_target": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "removed_components_count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "normalization": {
+          "type": "string",
+          "enum": [
+            "none",
+            "zscore_reference"
+          ]
+        }
+      }
+    },
+    "training_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "estimator"
+      ],
+      "properties": {
+        "estimator": {
+          "type": "string",
+          "enum": [
+            "mean_difference",
+            "logistic_regression"
+          ]
+        },
+        "logistic_regression": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "C": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "max_iter": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "random_state": {
+              "type": "integer"
+            },
+            "multi_class": {
+              "type": "string"
+            }
+          }
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "transformers",
+            "mock"
+          ]
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "layer_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "selected_layer"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "two_thirds_depth",
+            "best_validation_metric"
+          ]
+        },
+        "selected_layer": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selection_metric": {
+          "type": "string",
+          "enum": [
+            "auroc",
+            "f1",
+            "stability"
+          ]
+        },
+        "min_auroc": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "stability_definition": {
+          "type": "string"
+        }
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "none",
+            "zscore_reference",
+            "temperature_scaling"
+          ]
+        },
+        "reference_dataset_id": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "created_at",
+        "config_hash",
+        "model_hash",
+        "data_hash"
+      ],
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "config_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "model_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "data_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "probes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "probe_name",
+          "selected_layer",
+          "vector"
+        ],
+        "properties": {
+          "probe_name": {
+            "type": "string"
+          },
+          "selected_layer": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "vector": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "number"
+            }
+          },
+          "per_layer_vectors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "layer",
+                "vector"
+              ],
+              "properties": {
+                "layer": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "vector": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          },
+          "validation_metrics": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

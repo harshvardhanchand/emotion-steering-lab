@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "emotion_steering_lab/schemas/probe_data.schema.json",
+  "title": "Emotion Steering Lab Probe Training Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "source_type",
+    "emotion_label",
+    "topic",
+    "text",
+    "split"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "record_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_type": {
+      "type": "string",
+      "enum": [
+        "story",
+        "dialogue",
+        "neutral_dialogue"
+      ]
+    },
+    "emotion_label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topic": {
+      "type": "string",
+      "minLength": 1
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "split": {
+      "type": "string",
+      "enum": [
+        "train",
+        "val",
+        "test"
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topic_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emotion_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "story_index_within_topic": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation_prompt_id": {
+          "type": "string"
+        },
+        "generation_model": {
+          "type": "string"
+        },
+        "quality_reviewed": {
+          "type": "boolean"
+        },
+        "generation_attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "qc_passed": {
+          "type": "boolean"
+        },
+        "qc_issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "generation_config_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "generation_model_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "extraction_hints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_token_index_for_pooling": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "speaker_role": {
+          "type": "string",
+          "enum": [
+            "human",
+            "assistant",
+            "present_speaker",
+            "other_speaker",
+            "na"
+          ]
+        }
+      }
+    }
+  }
+}

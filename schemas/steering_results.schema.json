@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "emotion_steering_lab/schemas/steering_results.schema.json",
+  "title": "Steering Result Record",
+  "oneOf": [
+    { "$ref": "#/$defs/sample_steer_result" },
+    { "$ref": "#/$defs/aggregate_steer_result" }
+  ],
+  "$defs": {
+    "sample_steer_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "base_run_id",
+        "steer_run_id",
+        "scope",
+        "scenario_id",
+        "category",
+        "seed",
+        "probe_name",
+        "alpha",
+        "steered_layers",
+        "baseline_final_severity",
+        "steered_final_severity",
+        "baseline_failure",
+        "steered_failure"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "record_type": { "type": "string", "const": "sample" },
+        "base_run_id": { "type": "string" },
+        "steer_run_id": { "type": "string" },
+        "scope": { "type": "string", "enum": ["full_suite", "failures_only"] },
+        "scenario_id": { "type": "string" },
+        "category": { "type": "string", "minLength": 1 },
+        "seed": { "type": "integer" },
+        "probe_name": { "type": "string" },
+        "alpha": { "type": "number", "minimum": -1, "maximum": 1 },
+        "steered_layers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "baseline_final_severity": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "steered_final_severity": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "baseline_failure": { "type": "boolean" },
+        "steered_failure": { "type": "boolean" },
+        "delta_failure": { "type": "integer", "minimum": -1, "maximum": 1 },
+        "quality_delta": { "type": "number" },
+        "status": { "type": "string", "enum": ["ok", "timeout", "error"] },
+        "error": { "type": "string" },
+        "reproducibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["created_at", "config_hash", "model_hash"],
+          "properties": {
+            "created_at": { "type": "string", "format": "date-time" },
+            "config_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "model_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        }
+      }
+    },
+    "aggregate_steer_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "base_run_id",
+        "steer_run_id",
+        "scope",
+        "category",
+        "probe_name",
+        "alpha",
+        "sample_count",
+        "baseline_failure_rate",
+        "steered_failure_rate",
+        "delta_failure_rate",
+        "baseline_critical_rate",
+        "steered_critical_rate",
+        "delta_critical_rate"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "record_type": { "type": "string", "const": "aggregate" },
+        "base_run_id": { "type": "string" },
+        "steer_run_id": { "type": "string" },
+        "scope": { "type": "string", "enum": ["full_suite", "failures_only"] },
+        "category": { "type": "string", "minLength": 1 },
+        "probe_name": { "type": "string" },
+        "alpha": { "type": "number", "minimum": -1, "maximum": 1 },
+        "sample_count": { "type": "integer", "minimum": 1 },
+        "baseline_failure_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "steered_failure_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "delta_failure_rate": { "type": "number", "minimum": -1, "maximum": 1 },
+        "baseline_critical_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "steered_critical_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "delta_critical_rate": { "type": "number", "minimum": -1, "maximum": 1 },
+        "reproducibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["created_at", "config_hash", "model_hash"],
+          "properties": {
+            "created_at": { "type": "string", "format": "date-time" },
+            "config_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "model_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          }
+        }
+      }
+    }
+  }
+}
