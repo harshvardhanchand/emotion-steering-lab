@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from art.cli import app
+from art.constants import TOPICS
 from art.data.generate import DataGenConfig, generate_probe_data
 from art.schemas.validator import validate_documents
 
@@ -213,3 +215,118 @@ def test_data_generate_uses_batch_generation_when_available(monkeypatch, tmp_pat
     assert len(rows) > 0
     assert backend.batch_calls >= 1
     assert backend.single_calls == 0
+
+
+def test_data_heldout_cli_generates_test_split_without_topic_overlap(
+    monkeypatch, tmp_path: Path
+) -> None:
+    shutil.copytree(Path.cwd() / "schemas", tmp_path / "schemas")
+    monkeypatch.setenv("ART_PROJECT_ROOT", str(tmp_path))
+
+    runner = CliRunner()
+    train_out = tmp_path / "data/train_probe_data.jsonl"
+    r1 = runner.invoke(
+        app,
+        [
+            "data",
+            "generate",
+            "--out",
+            str(train_out),
+            "--backend",
+            "mock",
+            "--model-id",
+            "mock/model",
+            "--tokenizer-id",
+            "mock/tokenizer",
+            "--topic",
+            "Train topic only",
+            "--emotion",
+            "afraid",
+            "--emotion",
+            "amazed",
+        ],
+    )
+    assert r1.exit_code == 0, r1.output
+
+    heldout_out = tmp_path / "data/eval_cases.jsonl"
+    r2 = runner.invoke(
+        app,
+        [
+            "data",
+            "heldout",
+            "--train-probe-data",
+            str(train_out),
+            "--out",
+            str(heldout_out),
+            "--backend",
+            "mock",
+            "--model-id",
+            "mock/model",
+            "--tokenizer-id",
+            "mock/tokenizer",
+            "--topic",
+            "Heldout topic only",
+        ],
+    )
+    assert r2.exit_code == 0, r2.output
+    assert heldout_out.exists()
+    assert (tmp_path / "data/eval_cases.jsonl.meta.json").exists()
+
+    rows = [json.loads(line) for line in heldout_out.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(rows) > 0
+    validate_documents(rows, "probe_data.schema.json", context_prefix="probe_data")
+    assert all(str(r.get("split")) == "test" for r in rows)
+    assert all(str(r.get("topic")) == "Heldout topic only" for r in rows)
+    assert {str(r.get("emotion_label")) for r in rows} == {"afraid", "amazed"}
+
+
+def test_data_heldout_cli_rejects_explicit_topic_overlap(monkeypatch, tmp_path: Path) -> None:
+    shutil.copytree(Path.cwd() / "schemas", tmp_path / "schemas")
+    monkeypatch.setenv("ART_PROJECT_ROOT", str(tmp_path))
+
+    runner = CliRunner()
+    train_out = tmp_path / "data/train_probe_data.jsonl"
+    r1 = runner.invoke(
+        app,
+        [
+            "data",
+            "generate",
+            "--out",
+            str(train_out),
+            "--backend",
+            "mock",
+            "--model-id",
+            "mock/model",
+            "--tokenizer-id",
+            "mock/tokenizer",
+            "--topic",
+            TOPICS[0],
+            "--emotion",
+            "afraid",
+            "--emotion",
+            "amazed",
+        ],
+    )
+    assert r1.exit_code == 0, r1.output
+
+    r2 = runner.invoke(
+        app,
+        [
+            "data",
+            "heldout",
+            "--train-probe-data",
+            str(train_out),
+            "--out",
+            str(tmp_path / "data/eval_cases.jsonl"),
+            "--backend",
+            "mock",
+            "--model-id",
+            "mock/model",
+            "--tokenizer-id",
+            "mock/tokenizer",
+            "--topic",
+            TOPICS[0],
+        ],
+    )
+    assert r2.exit_code != 0
+    assert "overlap" in r2.output.lower()

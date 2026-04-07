@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from art.backends.base import ModelBackend
 from art.backends.mock_backend import MockBackend
+from art.backends.transformerlens_backend import TransformerLensBackend
 from art.backends.transformers_backend import TransformersBackend
 from art.errors import ArtError
 
@@ -26,6 +27,14 @@ def create_backend(
             dtype=dtype,
         )
 
+    if backend_name == "transformerlens":
+        return TransformerLensBackend(
+            model_id=model_id,
+            tokenizer_id=tokenizer_id or model_id,
+            device=device,
+            dtype=dtype,
+        )
+
     if backend_name == "mock":
         return MockBackend(
             model_id=model_id,
@@ -35,4 +44,3 @@ def create_backend(
         )
 
     raise ArtError(f"Unsupported backend: {backend_name}")
-

@@ -722,7 +722,12 @@ def render() -> None:
     with st.expander("Advanced", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            gen_backend = st.selectbox("Backend", options=["transformers", "mock"], index=0, key="gen_backend")
+            gen_backend = st.selectbox(
+                "Backend",
+                options=["transformers", "transformerlens", "mock"],
+                index=0,
+                key="gen_backend",
+            )
         with c2:
             gen_device = st.selectbox("Device", options=["auto", "cpu", "mps", "cuda"], index=0, key="gen_device")
         with c3:
@@ -1110,8 +1115,12 @@ def render() -> None:
         with cc1:
             chat_backend = st.selectbox(
                 "Chat backend",
-                options=["transformers", "mock"],
-                index=0 if default_cfg.get("backend_name", "transformers") == "transformers" else 1,
+                options=["transformers", "transformerlens", "mock"],
+                index=(
+                    1
+                    if default_cfg.get("backend_name", "transformers") == "transformerlens"
+                    else (2 if default_cfg.get("backend_name", "transformers") == "mock" else 0)
+                ),
             )
         with cc2:
             chat_model_id = st.text_input("Chat model", value=str(default_cfg.get("model_id", artifact["model"]["model_id"])))

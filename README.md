@@ -8,6 +8,28 @@ Inference-time steering framework with a method-faithful pipeline inspired by An
 4. Save reusable steering profiles
 5. Explore effects in a small UI chat sandbox
 
+## Working Demo
+
+Use this section to attach qualitative demo material from the UI:
+
+- video walkthrough (baseline vs steered)
+- screenshots for selected prompt examples
+- short notes on what changed after steering
+
+Suggested paths to keep demo assets organized:
+
+- `docs/demo/videos/`
+- `docs/demo/screenshots/`
+
+## Quantitative Results
+
+Keep quantitative artifacts in-repo so users can inspect and reproduce:
+
+- `evidence/*_sweep.jsonl`
+- `evidence/*_sweep.md`
+- `evidence/*_sweep.html`
+- `evidence/quant_summary.md` (optional consolidated table)
+
 ## Quickstart
 
 ```bash
@@ -23,6 +45,24 @@ uv run art steer run --probe-artifact artifacts/probe_artifact.json --cases data
 uv run art steer sweep --probe-artifact artifacts/probe_artifact.json --probe-name calm --cases data/probe_data.jsonl --backend transformers --model-id Qwen/Qwen2.5-0.5B-Instruct
 ```
 
+## Held-Out Eval (No Train/Eval Topic Overlap)
+
+Use a separate eval file for steering sweeps:
+
+```bash
+# 1) Train pipeline
+uv run art data generate --backend transformers --model-id Qwen/Qwen2.5-0.5B-Instruct --emotion happy --emotion sad --emotion desperate --out data/train_probe_data.jsonl
+uv run art probe train --probe-data data/train_probe_data.jsonl --backend transformers --model-id Qwen/Qwen2.5-0.5B-Instruct --out artifacts/probe_artifact.json
+
+# 2) Build held-out eval cases (topics excluded from train data by default)
+uv run art data heldout --train-probe-data data/train_probe_data.jsonl --backend transformers --model-id Qwen/Qwen2.5-0.5B-Instruct --out data/eval_cases.jsonl --n-topics 10 --no-generation-cache
+
+# 3) Evaluate steering on held-out cases
+uv run art steer sweep --probe-artifact artifacts/probe_artifact.json --probe-name desperate --cases data/eval_cases.jsonl --backend transformers --model-id Qwen/Qwen2.5-0.5B-Instruct --out evidence/desperate_eval_sweep.jsonl --report-md evidence/desperate_eval_sweep.md --report-html evidence/desperate_eval_sweep.html
+```
+
+`art data heldout` forces `split=test` on generated eval records.
+
 For contributors using editable installs:
 
 ```bash
@@ -37,6 +77,14 @@ uv run art probe train --probe-data data/probe_data.jsonl --backend mock --model
 uv run art probe diagnose --probe-artifact artifacts/probe_artifact.json --cases data/probe_data.jsonl --backend mock --model-id mock/model --tokenizer-id mock/tokenizer --out reports/diagnosis.jsonl
 uv run art steer run --probe-artifact artifacts/probe_artifact.json --probe-name calm --cases data/probe_data.jsonl --backend mock --model-id mock/model --tokenizer-id mock/tokenizer
 uv run art steer sweep --probe-artifact artifacts/probe_artifact.json --probe-name calm --cases data/probe_data.jsonl --backend mock --model-id mock/model --tokenizer-id mock/tokenizer
+```
+
+Optional TransformerLens backend:
+
+```bash
+uv sync --extra hf --extra tl --no-editable
+uv run art data generate --backend transformerlens --model-id gpt2 --emotion happy --emotion sad --topic "A test topic" --out data/tl_probe_data.jsonl
+uv run art probe train --probe-data data/tl_probe_data.jsonl --backend transformerlens --model-id gpt2 --out artifacts/tl_probe_artifact.json
 ```
 
 ## UI
@@ -98,10 +146,17 @@ UI includes:
 - resumable `Generate + Train`: if `probe_data.jsonl` already exists and artifact does not, UI resumes from existing data and writes `<probe_artifact_stem>.checkpoint.json`
 - multi-emotion steering sliders with profile save/load
 - live chat sandbox showing baseline vs steered outputs with score/severity deltas
+- backend choices for generation/training/chat: `transformers`, `transformerlens`, `mock`
+
+TransformerLens note:
+
+- HF `transformers` backend is the primary path for broad model compatibility.
+- `transformerlens` backend is available for mech-interp workflows and works best with TransformerLens-supported model families.
 
 ## Commands
 
 - `art data generate`
+- `art data heldout`
 - `art probe train`
 - `art probe diagnose`
 - `art steer run`

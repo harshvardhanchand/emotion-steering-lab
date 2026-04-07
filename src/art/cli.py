@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random
 from typing import Any
 
 import typer
@@ -18,6 +19,7 @@ from art.constants import (
     DEFAULT_MAX_LENGTH,
     DEFAULT_NUM_LAYERS,
     PAPER_MODE_NAME,
+    TOPICS,
     project_root,
 )
 from art.data.generate import DataGenConfig, generate_probe_data
@@ -214,6 +216,177 @@ def data_generate(
         )
         typer.echo(f"rows={len(rows)}")
         typer.echo(f"probe_data={out_path}")
+    except (ArtError, SchemaValidationError, OSError, ValueError) as exc:
+        _exit_with_error(exc)
+
+
+@data_app.command("heldout")
+def data_heldout(
+    train_probe_data: Path = typer.Option(..., "--train-probe-data"),
+    out: Path = typer.Option(Path("data/eval_cases.jsonl"), "--out"),
+    backend: str = typer.Option("transformers", "--backend"),
+    model_id: str = typer.Option("Qwen/Qwen2.5-0.5B-Instruct", "--model-id"),
+    tokenizer_id: str = typer.Option("", "--tokenizer-id"),
+    device: str = typer.Option("auto", "--device"),
+    dtype: str = typer.Option("auto", "--dtype"),
+    max_length: int = typer.Option(DEFAULT_MAX_LENGTH, "--max-length"),
+    max_new_tokens: int = typer.Option(768, "--max-new-tokens"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    generation_batch_size: int = typer.Option(8, "--generation-batch-size"),
+    generation_cache: bool = typer.Option(True, "--generation-cache/--no-generation-cache"),
+    generation_cache_dir: str = typer.Option("cache/generation", "--generation-cache-dir"),
+    emotion: list[str] = typer.Option(
+        [],
+        "--emotion",
+        help=(
+            "Repeat flag to select one or more emotions. If omitted, derives non-neutral emotions "
+            "from --train-probe-data."
+        ),
+    ),
+    topic: list[str] = typer.Option(
+        [],
+        "--topic",
+        help=(
+            "Optional explicit held-out topics. If omitted, selects canonical topics excluding those in "
+            "--train-probe-data."
+        ),
+    ),
+    n_topics: int = typer.Option(
+        10,
+        "--n-topics",
+        min=1,
+        help="Number of held-out topics to sample when --topic is not provided.",
+    ),
+    allow_topic_overlap: bool = typer.Option(
+        False,
+        "--allow-topic-overlap/--no-allow-topic-overlap",
+        help="Allow overlap between held-out topics and training topics.",
+    ),
+    stories_per_topic_emotion: int = typer.Option(1, "--stories-per-topic-emotion"),
+    dialogues_per_topic_emotion: int = typer.Option(0, "--dialogues-per-topic-emotion"),
+    neutral_dialogues_per_topic: int = typer.Option(0, "--neutral-dialogues-per-topic"),
+    seed: int = typer.Option(202, "--seed"),
+    paper_mode: str = typer.Option(PAPER_MODE_NAME, "--paper-mode"),
+) -> None:
+    """Generate held-out eval cases that do not overlap training topics by default."""
+
+    try:
+        if paper_mode != PAPER_MODE_NAME:
+            raise ArtError(f"Unsupported paper mode: {paper_mode}")
+
+        train_path = _resolve(train_probe_data)
+        train_rows = read_jsonl(train_path)
+        validate_documents(train_rows, "probe_data.schema.json", context_prefix="probe_data")
+
+        train_topics = sorted(
+            {
+                str(r.get("topic", "")).strip()
+                for r in train_rows
+                if str(r.get("topic", "")).strip()
+            }
+        )
+        train_topic_set = set(train_topics)
+
+        selected_emotions = list(emotion)
+        if not selected_emotions:
+            selected_emotions = sorted(
+                {
+                    str(r.get("emotion_label", "")).strip()
+                    for r in train_rows
+                    if str(r.get("emotion_label", "")).strip()
+                    and str(r.get("emotion_label", "")).strip() != "neutral"
+                }
+            )
+        if not selected_emotions:
+            raise ArtError(
+                "Could not derive non-neutral emotions from --train-probe-data. "
+                "Pass --emotion explicitly."
+            )
+
+        selected_topics: list[str]
+        if topic:
+            selected_topics = list(topic)
+        else:
+            candidates = list(TOPICS) if allow_topic_overlap else [t for t in TOPICS if t not in train_topic_set]
+            if len(candidates) < n_topics:
+                raise ArtError(
+                    f"Not enough held-out topics: need {n_topics}, have {len(candidates)}. "
+                    "Pass explicit --topic values, reduce --n-topics, or enable --allow-topic-overlap."
+                )
+            rng = random.Random(seed)
+            rng.shuffle(candidates)
+            selected_topics = candidates[:n_topics]
+
+        if not allow_topic_overlap:
+            overlap = sorted(set(selected_topics).intersection(train_topic_set))
+            if overlap:
+                preview = ", ".join(overlap[:5])
+                raise ArtError(
+                    f"Held-out topic overlap detected ({len(overlap)} topics): {preview}. "
+                    "Choose different --topic values or set --allow-topic-overlap."
+                )
+
+        cfg = DataGenConfig(
+            emotions=selected_emotions,
+            topics=selected_topics,
+            stories_per_topic_emotion=stories_per_topic_emotion,
+            dialogues_per_topic_emotion=dialogues_per_topic_emotion,
+            neutral_dialogues_per_topic=neutral_dialogues_per_topic,
+            seed=seed,
+            backend_name=backend,
+            model_id=model_id,
+            tokenizer_id=tokenizer_id or model_id,
+            device=device,
+            dtype=dtype,
+            max_length=max_length,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            generation_batch_size=generation_batch_size,
+            use_generation_cache=generation_cache,
+            generation_cache_dir=generation_cache_dir,
+        )
+        rows = generate_probe_data(cfg)
+        for row in rows:
+            row["split"] = "test"
+        validate_documents(rows, "probe_data.schema.json", context_prefix="probe_data")
+
+        out_path = _resolve(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if out_path.exists():
+            raise ArtError(f"Output already exists (immutable): {out_path}")
+        write_jsonl(out_path, rows)
+
+        _write_meta(
+            primary_output=out_path,
+            command="data.heldout",
+            config={
+                "paper_mode": paper_mode,
+                "backend": backend,
+                "model_id": model_id,
+                "tokenizer_id": tokenizer_id or model_id,
+                "device": device,
+                "dtype": dtype,
+                "max_length": max_length,
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature,
+                "generation_batch_size": generation_batch_size,
+                "generation_cache": generation_cache,
+                "generation_cache_dir": generation_cache_dir,
+                "emotion": selected_emotions,
+                "topic": selected_topics,
+                "n_topics": n_topics,
+                "allow_topic_overlap": allow_topic_overlap,
+                "stories_per_topic_emotion": stories_per_topic_emotion,
+                "dialogues_per_topic_emotion": dialogues_per_topic_emotion,
+                "neutral_dialogues_per_topic": neutral_dialogues_per_topic,
+                "seed": seed,
+            },
+            inputs={"train_probe_data": train_path},
+            outputs={"eval_cases": out_path},
+        )
+        typer.echo(f"rows={len(rows)}")
+        typer.echo(f"heldout_topics={len(selected_topics)}")
+        typer.echo(f"eval_cases={out_path}")
     except (ArtError, SchemaValidationError, OSError, ValueError) as exc:
         _exit_with_error(exc)
 
