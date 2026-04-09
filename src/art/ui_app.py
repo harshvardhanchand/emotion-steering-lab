@@ -7,7 +7,6 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -975,8 +974,9 @@ def render() -> None:
         st.progress(int(round(float(job.get("progress", 0.0)) * 100)), text=str(job.get("message", "Running")))
         status = str(job.get("status", ""))
         if status == "running":
-            time.sleep(0.2)
-            st.rerun()
+            st.caption("Build job running in background. Use refresh if progress looks stale.")
+            if st.button("Refresh Status", use_container_width=False, key="refresh_build_status"):
+                st.rerun()
         elif status == "completed":
             result = job.get("result") or {}
             st.success(
@@ -1242,6 +1242,8 @@ def render() -> None:
 def launch() -> None:
     app_path = Path(__file__).resolve()
     env = os.environ.copy()
+    host = env.get("ART_UI_HOST", "0.0.0.0")
+    port = str(env.get("ART_UI_PORT", "8501"))
     env.setdefault("TRANSFORMERS_VERBOSITY", "error")
     env.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -1253,12 +1255,26 @@ def launch() -> None:
             "streamlit",
             "run",
             str(app_path),
+            "--server.address",
+            host,
+            "--server.port",
+            port,
+            "--server.headless",
+            "true",
             "--server.fileWatcherType",
             "none",
-            "--logger.level",
-            "error",
             "--server.runOnSave",
             "false",
+            "--server.enableCORS",
+            env.get("ART_UI_ENABLE_CORS", "false"),
+            "--server.enableXsrfProtection",
+            env.get("ART_UI_ENABLE_XSRF", "false"),
+            "--server.enableWebsocketCompression",
+            env.get("ART_UI_ENABLE_WS_COMPRESSION", "false"),
+            "--browser.gatherUsageStats",
+            env.get("ART_UI_GATHER_USAGE_STATS", "false"),
+            "--logger.level",
+            env.get("ART_UI_LOG_LEVEL", "error"),
         ],
         check=True,
         env=env,

@@ -46,6 +46,49 @@ def _decoder_layers(model: Any) -> list[Any]:
     raise ArtError("Unsupported model architecture: cannot find decoder layers")
 
 
+def _coerce_token_id(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            coerced = _coerce_token_id(item)
+            if coerced is not None:
+                return coerced
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_eos_token_id(tokenizer: Any, model: Any) -> int | None:
+    token_eos = _coerce_token_id(getattr(tokenizer, "eos_token_id", None))
+    if token_eos is not None:
+        return token_eos
+    cfg = getattr(model, "config", None)
+    return _coerce_token_id(getattr(cfg, "eos_token_id", None))
+
+
+def _build_generation_kwargs(
+    *,
+    max_new_tokens: int,
+    temperature: float,
+    pad_token_id: int | None,
+    eos_token_id: int | None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"max_new_tokens": int(max_new_tokens)}
+    if pad_token_id is not None:
+        kwargs["pad_token_id"] = int(pad_token_id)
+    if eos_token_id is not None:
+        kwargs["eos_token_id"] = int(eos_token_id)
+    if temperature > 0:
+        kwargs["do_sample"] = True
+        kwargs["temperature"] = float(temperature)
+    else:
+        kwargs["do_sample"] = False
+    return kwargs
+
+
 @dataclass
 class TransformersBackend:
     """Backend powered by Hugging Face Transformers."""
@@ -70,7 +113,11 @@ class TransformersBackend:
         self.device = _pick_device(torch, self.device)
         torch_dtype = _resolve_dtype(torch, self.dtype)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id or self.model_id, use_fast=True)
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id or self.model_id, use_fast=True)
+        except Exception:
+            # Some models do not ship a fast tokenizer implementation.
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id or self.model_id, use_fast=False)
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
             torch_dtype=torch_dtype,
@@ -85,8 +132,12 @@ class TransformersBackend:
         raw = f"{self.backend_name}|{self.model_id}|{self.tokenizer_id}|{self.model_revision}|{cfg_json}"
         self._model_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-        if self.tokenizer.pad_token_id is None:
+        self._eos_token_id = _resolve_eos_token_id(self.tokenizer, self.model)
+        if self.tokenizer.pad_token_id is None and getattr(self.tokenizer, "eos_token", None) is not None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self._pad_token_id = _coerce_token_id(getattr(self.tokenizer, "pad_token_id", None))
+        if self._pad_token_id is None:
+            self._pad_token_id = self._eos_token_id
 
     def _encode(self, text: str, *, max_length: int) -> dict[str, Any]:
         encoded = self.tokenizer(
@@ -124,6 +175,8 @@ class TransformersBackend:
     def extract_hidden_states_batch(self, texts: list[str], *, max_length: int) -> list[np.ndarray]:
         if not texts:
             return []
+        if self._pad_token_id is None and len(texts) > 1:
+            return [self.extract_hidden_states(text, max_length=max_length) for text in texts]
         torch = self._torch
         batch = self._encode_batch(texts, max_length=max_length)
         with torch.inference_mode():
@@ -214,16 +267,12 @@ class TransformersBackend:
         batch = self._encode(prompt, max_length=max_length)
         input_len = int(batch["input_ids"].shape[1])
 
-        gen_kwargs: dict[str, Any] = {
-            "max_new_tokens": max_new_tokens,
-            "pad_token_id": int(self.tokenizer.pad_token_id),
-            "eos_token_id": int(self.tokenizer.eos_token_id),
-        }
-        if temperature > 0:
-            gen_kwargs["do_sample"] = True
-            gen_kwargs["temperature"] = float(temperature)
-        else:
-            gen_kwargs["do_sample"] = False
+        gen_kwargs = _build_generation_kwargs(
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            pad_token_id=self._pad_token_id,
+            eos_token_id=self._eos_token_id,
+        )
 
         handles: list[Any] = []
         try:
@@ -264,6 +313,17 @@ class TransformersBackend:
                 )
                 for prompt in prompts
             ]
+        if self._pad_token_id is None and len(prompts) > 1:
+            return [
+                self.generate(
+                    prompt,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    steering=None,
+                    max_length=max_length,
+                )
+                for prompt in prompts
+            ]
 
         torch = self._torch
         batch = self._encode_batch(prompts, max_length=max_length)
@@ -273,27 +333,26 @@ class TransformersBackend:
         else:
             input_lens = [int(x) for x in attention_mask.sum(dim=1).tolist()]
 
-        gen_kwargs: dict[str, Any] = {
-            "max_new_tokens": max_new_tokens,
-            "pad_token_id": int(self.tokenizer.pad_token_id),
-            "eos_token_id": int(self.tokenizer.eos_token_id),
-        }
-        if temperature > 0:
-            gen_kwargs["do_sample"] = True
-            gen_kwargs["temperature"] = float(temperature)
-        else:
-            gen_kwargs["do_sample"] = False
+        gen_kwargs = _build_generation_kwargs(
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            pad_token_id=self._pad_token_id,
+            eos_token_id=self._eos_token_id,
+        )
 
         with torch.inference_mode():
             out = self.model.generate(**batch, **gen_kwargs)
 
-        pad_id = int(self.tokenizer.pad_token_id)
+        pad_id = self._pad_token_id
         results: list[tuple[str, int]] = []
         for i in range(len(prompts)):
             start = max(0, min(int(out.shape[1]), int(input_lens[i])))
             generated_ids = out[i, start:]
-            non_pad = generated_ids[generated_ids != pad_id]
-            usable_ids = non_pad if int(non_pad.shape[0]) > 0 else generated_ids
+            if pad_id is None:
+                usable_ids = generated_ids
+            else:
+                non_pad = generated_ids[generated_ids != int(pad_id)]
+                usable_ids = non_pad if int(non_pad.shape[0]) > 0 else generated_ids
             response = self.tokenizer.decode(usable_ids, skip_special_tokens=True).strip()
             token_count = int(usable_ids.shape[0])
             results.append((response, max(1, token_count)))
