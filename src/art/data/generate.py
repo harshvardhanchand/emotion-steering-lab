@@ -204,6 +204,48 @@ NEUTRAL_PLEASANTRY_TERMS = {
     "delighted",
 }
 
+# Terms that are in the global emotion list but are too ambiguous for strict lexical
+# neutrality gating (high false-positive rate in neutral task dialogs).
+NEUTRAL_LEAKAGE_EXCLUDED_TERMS = {
+    "content",
+    "hope",
+    "kind",
+    "patient",
+    "safe",
+    "sensitive",
+    "sorry",
+    "stuck",
+}
+
+_HUMAN_LABELS = (
+    "person",
+    "user",
+    "human",
+    "questioner",
+    "speaker 1",
+    "speaker1",
+)
+_ASSISTANT_LABELS = (
+    "ai",
+    "assistant",
+    "model",
+    "agent",
+    "speaker 2",
+    "speaker2",
+)
+
+
+def _speaker_label_pattern(labels: tuple[str, ...]) -> re.Pattern[str]:
+    joined = "|".join(re.escape(x) for x in labels)
+    return re.compile(
+        rf"(^|\n)\s*(?:[-*]\s*|\d+[.)]\s*)?(?:{joined})\s*(?:[:：]|[-–—])\s*",
+        re.IGNORECASE,
+    )
+
+
+_HUMAN_LABEL_PATTERN = _speaker_label_pattern(_HUMAN_LABELS)
+_ASSISTANT_LABEL_PATTERN = _speaker_label_pattern(_ASSISTANT_LABELS)
+
 
 @dataclass(frozen=True)
 class DataGenConfig:
@@ -273,8 +315,9 @@ def _extract_first_block(text: str, block_label: str) -> str:
 
 
 def _to_human_assistant(dialogue: str) -> str:
-    out = re.sub(r"(^|\n)\s*Person:\s*", r"\1Human: ", dialogue)
-    out = re.sub(r"(^|\n)\s*AI:\s*", r"\1Assistant: ", out)
+    out = dialogue.replace("\r\n", "\n").replace("\r", "\n")
+    out = _HUMAN_LABEL_PATTERN.sub(r"\1Human: ", out)
+    out = _ASSISTANT_LABEL_PATTERN.sub(r"\1Assistant: ", out)
     return out.strip()
 
 
@@ -524,7 +567,7 @@ def _all_emotion_lexicon() -> set[str]:
     for key, vals in EMOTION_SYNONYMS.items():
         all_terms.add(key)
         all_terms.update(v.lower() for v in vals)
-    return all_terms
+    return {term for term in all_terms if term not in NEUTRAL_LEAKAGE_EXCLUDED_TERMS}
 
 
 def _check_story_qc(text: str, *, emotion: str) -> list[str]:

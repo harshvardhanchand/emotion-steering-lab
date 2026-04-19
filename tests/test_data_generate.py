@@ -9,7 +9,12 @@ from typer.testing import CliRunner
 
 from art.cli import app
 from art.constants import TOPICS
-from art.data.generate import DataGenConfig, generate_probe_data
+from art.data.generate import (
+    DataGenConfig,
+    _check_neutral_dialogue_qc,
+    _to_human_assistant,
+    generate_probe_data,
+)
 from art.errors import ArtError
 from art.schemas.validator import validate_documents
 
@@ -217,6 +222,33 @@ def test_data_generate_uses_batch_generation_when_available(monkeypatch, tmp_pat
     assert len(rows) > 0
     assert backend.batch_calls >= 1
     assert backend.single_calls == 0
+
+
+def test_to_human_assistant_normalizes_common_speaker_formats() -> None:
+    raw = """
+1) User : Can you summarize this?
+2) Assistant - Yes, share the text.
+
+Speaker 1: Please keep it brief.
+Speaker 2 — Sure.
+"""
+    normalized = _to_human_assistant(raw)
+    assert "Human: Can you summarize this?" in normalized
+    assert "Assistant: Yes, share the text." in normalized
+    assert "Human: Please keep it brief." in normalized
+    assert "Assistant: Sure." in normalized
+
+
+def test_neutral_qc_allows_ambiguous_non_emotional_terms() -> None:
+    text = "Human: Create a table of contents.\nAssistant: Here is a content outline with a kind structure."
+    issues = _check_neutral_dialogue_qc(text)
+    assert not any("neutral leakage terms found" in issue for issue in issues)
+
+
+def test_neutral_qc_still_flags_clear_emotion_terms() -> None:
+    text = "Human: I feel sad today.\nAssistant: Let's proceed with the task."
+    issues = _check_neutral_dialogue_qc(text)
+    assert any("neutral leakage terms found" in issue for issue in issues)
 
 
 def test_data_generate_skips_failed_qc_rows_and_logs_drops(monkeypatch, tmp_path: Path) -> None:
