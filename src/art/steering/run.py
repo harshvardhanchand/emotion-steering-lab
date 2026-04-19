@@ -96,6 +96,15 @@ def run_steering(
             f"Probe vector dim ({vector.shape[0]}) does not match backend hidden size ({backend.hidden_size})"
         )
 
+    expected_model_hash = str(probe_artifact.get("reproducibility", {}).get("model_hash", "")).strip()
+    actual_model_hash = str(backend.model_hash()).strip()
+    if expected_model_hash and actual_model_hash != expected_model_hash:
+        raise ArtError(
+            "Probe artifact model_hash mismatch. "
+            f"artifact={expected_model_hash}, runtime={actual_model_hash}. "
+            "Use the same model/tokenizer/backend configuration used for probe training."
+        )
+
     z_mean = float(probe.get("validation_metrics", {}).get("zscore_reference_mean", 0.0))
     z_std = float(probe.get("validation_metrics", {}).get("zscore_reference_std", 1.0))
     run_cfg = {

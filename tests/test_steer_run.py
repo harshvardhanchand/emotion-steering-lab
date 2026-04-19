@@ -4,11 +4,13 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from art.constants import EMOTION_WORDS, TOPICS
 from typer.testing import CliRunner
 
 from art.cli import app
 from art.data.generate import DataGenConfig, generate_probe_data
+from art.errors import ArtError
 from art.probes.train import train_probe_artifact
 from art.steering.run import run_steering
 
@@ -118,6 +120,43 @@ def test_failures_only_uses_actual_baseline_failures() -> None:
 
     deltas = {round(float(r["quality_delta"]), 6) for r in sample_rows}
     assert len(deltas) > 1
+
+
+def test_run_steering_rejects_model_hash_mismatch() -> None:
+    rows = generate_probe_data(
+        DataGenConfig(
+            topics=TOPICS[:1],
+            emotions=EMOTION_WORDS[:2],
+            seed=17,
+            backend_name="mock",
+            model_id="mock/model",
+            tokenizer_id="mock/tokenizer",
+        )
+    )
+    artifact = train_probe_artifact(
+        records=rows,
+        model_id="mock/model",
+        tokenizer_id="mock/tokenizer",
+        num_layers=12,
+        hidden_size=64,
+        backend_name="mock",
+    )
+    probe_name = artifact["probes"][0]["probe_name"]
+    artifact["reproducibility"]["model_hash"] = "f" * 64
+
+    with pytest.raises(ArtError, match="model_hash mismatch"):
+        run_steering(
+            probe_artifact=artifact,
+            probe_name=probe_name,
+            alpha=0.05,
+            cases=rows,
+            base_run_id="baseline",
+            steer_run_id="steer_mismatch",
+            scope="full_suite",
+            backend_name="mock",
+            model_id="mock/model",
+            tokenizer_id="mock/tokenizer",
+        )
 
 
 def test_steer_run_cli_applies_profile(monkeypatch, tmp_path: Path) -> None:
