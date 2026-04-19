@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 import json
 import random
 import re
@@ -225,6 +225,14 @@ class DataGenConfig:
     generation_batch_size: int = 8
     use_generation_cache: bool = True
     generation_cache_dir: str | None = "cache/generation"
+    max_drop_pct: float = 0.05
+    max_drop_pct_per_source_type: float = 0.20
+    max_drop_pct_per_emotion: float = 0.20
+    min_required_neutral_rows: int | None = None
+    min_required_story_emotion_classes: int = 2
+    min_required_split_count_per_class: int = 1
+    qc_drop_log_path: str | None = "artifacts/qc_dropped_rows.jsonl"
+    qc_drop_summary_path: str | None = "artifacts/qc_drop_summary.jsonl"
 
 
 @dataclass
@@ -277,6 +285,70 @@ def _generation_cache_root(path: str | Path | None) -> Path:
     if p.is_absolute():
         return p.resolve()
     return (project_root() / p).resolve()
+
+
+def _qc_drop_log_path(path: str | Path | None) -> Path | None:
+    if path is None:
+        return None
+    p = Path(path)
+    if p.is_absolute():
+        return p.resolve()
+    return (project_root() / p).resolve()
+
+
+def _qc_drop_summary_path(path: str | Path | None) -> Path | None:
+    if path is None:
+        return None
+    p = Path(path)
+    if p.is_absolute():
+        return p.resolve()
+    return (project_root() / p).resolve()
+
+
+def generation_config_payload(
+    config: DataGenConfig,
+    *,
+    topics: list[str],
+    emotions: list[str],
+) -> dict[str, Any]:
+    return {
+        "paper_mode": PAPER_MODE_NAME,
+        "topics": topics,
+        "emotions": emotions,
+        "stories_per_topic_emotion": config.stories_per_topic_emotion,
+        "dialogues_per_topic_emotion": config.dialogues_per_topic_emotion,
+        "neutral_dialogues_per_topic": config.neutral_dialogues_per_topic,
+        "seed": config.seed,
+        "backend_name": config.backend_name,
+        "model_id": config.model_id,
+        "tokenizer_id": config.tokenizer_id or config.model_id,
+        "device": config.device,
+        "dtype": config.dtype,
+        "max_length": config.max_length,
+        "max_new_tokens": config.max_new_tokens,
+        "temperature": config.temperature,
+        "max_regen_attempts": config.max_regen_attempts,
+        "generation_batch_size": config.generation_batch_size,
+        "use_generation_cache": bool(config.use_generation_cache),
+        "generation_cache_dir": config.generation_cache_dir or "",
+        "max_drop_pct": float(config.max_drop_pct),
+        "max_drop_pct_per_source_type": float(config.max_drop_pct_per_source_type),
+        "max_drop_pct_per_emotion": float(config.max_drop_pct_per_emotion),
+        "min_required_neutral_rows": config.min_required_neutral_rows,
+        "min_required_story_emotion_classes": int(config.min_required_story_emotion_classes),
+        "min_required_split_count_per_class": int(config.min_required_split_count_per_class),
+        "qc_drop_log_path": config.qc_drop_log_path or "",
+        "qc_drop_summary_path": config.qc_drop_summary_path or "",
+    }
+
+
+def generation_config_hash(
+    config: DataGenConfig,
+    *,
+    topics: list[str],
+    emotions: list[str],
+) -> str:
+    return hash_object(generation_config_payload(config, topics=topics, emotions=emotions))
 
 
 def _generation_cache_key(*, model_hash: str, prompt: str, cfg: DataGenConfig) -> str:
@@ -373,9 +445,16 @@ def _generate_prompts_cached(
     cfg: DataGenConfig,
     model_hash: str,
     cache_root: Path | None,
+    cache_allowed: list[bool] | None = None,
 ) -> list[tuple[str, int]]:
     if not prompts:
         return []
+    if cache_allowed is None:
+        cache_allowed = [True] * len(prompts)
+    if len(cache_allowed) != len(prompts):
+        raise ArtError(
+            f"cache_allowed length {len(cache_allowed)} does not match prompts length {len(prompts)}"
+        )
 
     results: list[tuple[str, int] | None] = [None] * len(prompts)
     missing_indices: list[int] = []
@@ -384,7 +463,7 @@ def _generate_prompts_cached(
 
     for i, prompt in enumerate(prompts):
         cache_path: Path | None = None
-        if cache_root is not None:
+        if cache_root is not None and bool(cache_allowed[i]):
             key = _generation_cache_key(model_hash=model_hash, prompt=prompt, cfg=cfg)
             cache_path = _generation_cache_path(cache_root, key)
             cached = _load_cached_generation(cache_path)
@@ -496,6 +575,18 @@ def generate_probe_data(
     unknown = [x for x in emotions if x not in EMOTION_WORDS]
     if unknown:
         raise ArtError(f"Unknown emotions: {unknown}")
+    if float(config.max_drop_pct) < 0.0 or float(config.max_drop_pct) > 1.0:
+        raise ArtError("max_drop_pct must be between 0.0 and 1.0")
+    if float(config.max_drop_pct_per_source_type) < 0.0 or float(config.max_drop_pct_per_source_type) > 1.0:
+        raise ArtError("max_drop_pct_per_source_type must be between 0.0 and 1.0")
+    if float(config.max_drop_pct_per_emotion) < 0.0 or float(config.max_drop_pct_per_emotion) > 1.0:
+        raise ArtError("max_drop_pct_per_emotion must be between 0.0 and 1.0")
+    if int(config.min_required_story_emotion_classes) < 1:
+        raise ArtError("min_required_story_emotion_classes must be >= 1")
+    if config.min_required_neutral_rows is not None and int(config.min_required_neutral_rows) < 0:
+        raise ArtError("min_required_neutral_rows must be >= 0")
+    if int(config.min_required_split_count_per_class) < 0:
+        raise ArtError("min_required_split_count_per_class must be >= 0")
 
     def _check_cancel() -> None:
         if should_cancel is not None and should_cancel():
@@ -515,28 +606,7 @@ def generate_probe_data(
         )
     model_hash = backend.model_hash()
 
-    gen_cfg = {
-        "paper_mode": PAPER_MODE_NAME,
-        "topics": topics,
-        "emotions": emotions,
-        "stories_per_topic_emotion": config.stories_per_topic_emotion,
-        "dialogues_per_topic_emotion": config.dialogues_per_topic_emotion,
-        "neutral_dialogues_per_topic": config.neutral_dialogues_per_topic,
-        "seed": config.seed,
-        "backend_name": config.backend_name,
-        "model_id": config.model_id,
-        "tokenizer_id": config.tokenizer_id or config.model_id,
-        "device": config.device,
-        "dtype": config.dtype,
-        "max_length": config.max_length,
-        "max_new_tokens": config.max_new_tokens,
-        "temperature": config.temperature,
-        "max_regen_attempts": config.max_regen_attempts,
-        "generation_batch_size": config.generation_batch_size,
-        "use_generation_cache": bool(config.use_generation_cache),
-        "generation_cache_dir": config.generation_cache_dir or "",
-    }
-    config_hash = hash_object(gen_cfg)
+    config_hash = generation_config_hash(config, topics=topics, emotions=emotions)
     cache_root = (
         _generation_cache_root(config.generation_cache_dir)
         if config.use_generation_cache
@@ -673,6 +743,9 @@ def generate_probe_data(
     batch_size = max(1, int(config.generation_batch_size))
     pending: deque[_GenerationTask] = deque(tasks)
     finalized: dict[int, tuple[str, int, list[str]]] = {}
+    dropped_rows: list[dict[str, Any]] = []
+    drop_log_path = _qc_drop_log_path(config.qc_drop_log_path)
+    drop_summary_path = _qc_drop_summary_path(config.qc_drop_summary_path)
     max_attempts = max(1, int(config.max_regen_attempts))
 
     while pending:
@@ -682,6 +755,7 @@ def generate_probe_data(
             chunk.append(pending.popleft())
 
         prompts: list[str] = []
+        cache_allowed: list[bool] = []
         for task in chunk:
             active_prompt = task.prompt
             if task.attempt > 1:
@@ -692,6 +766,7 @@ def generate_probe_data(
                     + "; ".join(issues)
                 )
             prompts.append(active_prompt)
+            cache_allowed.append(task.attempt <= 1)
 
         raw_outputs = _generate_prompts_cached(
             backend=backend,
@@ -699,6 +774,7 @@ def generate_probe_data(
             cfg=config,
             model_hash=model_hash,
             cache_root=cache_root,
+            cache_allowed=cache_allowed,
         )
 
         for task, (raw, _token_count) in zip(chunk, raw_outputs, strict=True):
@@ -717,17 +793,77 @@ def generate_probe_data(
 
             if task.attempt >= max_attempts:
                 record_id = str(task.record_template.get("record_id", "unknown_record"))
-                raise ArtError(
-                    f"Failed QC for {record_id} after {max_attempts} attempts: {', '.join(issues)}"
+                dropped_rows.append(
+                    {
+                        "schema_version": SCHEMA_VERSION,
+                        "event": "generation_qc_drop_v1",
+                        "dropped_at": utc_now_iso(),
+                        "record_id": record_id,
+                        "row_idx": int(task.row_idx),
+                        "source_type": str(task.record_template.get("source_type", "")),
+                        "emotion_label": str(task.record_template.get("emotion_label", "")),
+                        "topic": str(task.record_template.get("topic", "")),
+                        "attempts": int(task.attempt),
+                        "issues": [str(x) for x in issues],
+                    }
                 )
+                completed_items += 1
+                _emit(f"Dropped row after QC failures: {record_id}")
+                continue
 
             task.attempt += 1
             task.last_issues = issues
             pending.append(task)
 
+    if dropped_rows and drop_log_path is not None:
+        drop_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with drop_log_path.open("a", encoding="utf-8") as f:
+            for row in dropped_rows:
+                f.write(json.dumps(row, ensure_ascii=True) + "\n")
+
+    dropped_count = len(dropped_rows)
+    dropped_pct = dropped_count / float(total_items)
+    threshold_errors: list[str] = []
+    if dropped_pct > float(config.max_drop_pct):
+        threshold_errors.append(
+            f"Dropped {dropped_count}/{total_items} rows ({dropped_pct:.2%}) due to QC failures, "
+            f"exceeding max_drop_pct={float(config.max_drop_pct):.2%}"
+        )
+
+    planned_by_source = Counter(str(t.record_template.get("source_type", "")) for t in tasks)
+    dropped_by_source = Counter(str(r.get("source_type", "")) for r in dropped_rows)
+    for source_type, planned in sorted(planned_by_source.items()):
+        if int(planned) <= 0:
+            continue
+        dropped_for_source = int(dropped_by_source.get(source_type, 0))
+        source_drop_pct = dropped_for_source / float(planned)
+        if source_drop_pct > float(config.max_drop_pct_per_source_type):
+            threshold_errors.append(
+                f"Dropped {dropped_for_source}/{planned} rows for source_type={source_type} "
+                f"({source_drop_pct:.2%}), exceeding max_drop_pct_per_source_type="
+                f"{float(config.max_drop_pct_per_source_type):.2%}"
+            )
+
+    planned_by_emotion = Counter(str(t.record_template.get("emotion_label", "")) for t in tasks)
+    dropped_by_emotion = Counter(str(r.get("emotion_label", "")) for r in dropped_rows)
+    for emotion_label, planned in sorted(planned_by_emotion.items()):
+        if int(planned) <= 0:
+            continue
+        dropped_for_emotion = int(dropped_by_emotion.get(emotion_label, 0))
+        emotion_drop_pct = dropped_for_emotion / float(planned)
+        if emotion_drop_pct > float(config.max_drop_pct_per_emotion):
+            threshold_errors.append(
+                f"Dropped {dropped_for_emotion}/{planned} rows for emotion_label={emotion_label} "
+                f"({emotion_drop_pct:.2%}), exceeding max_drop_pct_per_emotion="
+                f"{float(config.max_drop_pct_per_emotion):.2%}"
+            )
+
     records: list[dict[str, Any]] = []
     for task in sorted(tasks, key=lambda t: t.row_idx):
-        text, attempt, qc_issues = finalized[task.row_idx]
+        item = finalized.get(task.row_idx)
+        if item is None:
+            continue
+        text, attempt, qc_issues = item
         row = dict(task.record_template)
         metadata = dict(row.get("metadata", {}))
         metadata.update(
@@ -744,8 +880,102 @@ def generate_probe_data(
         row["text"] = text
         records.append(row)
 
+    expected_neutral = len(topics) * int(config.neutral_dialogues_per_topic)
+    if config.min_required_neutral_rows is None:
+        min_neutral_rows = (
+            max(1, int(expected_neutral * (1.0 - float(config.max_drop_pct))))
+            if expected_neutral > 0
+            else 0
+        )
+    else:
+        min_neutral_rows = int(config.min_required_neutral_rows)
+    neutral_count = sum(1 for r in records if str(r.get("source_type")) == "neutral_dialogue")
+
+    story_emotion_classes = sorted(
+        {
+            str(r.get("emotion_label"))
+            for r in records
+            if str(r.get("source_type")) == "story" and str(r.get("emotion_label")) != "neutral"
+        }
+    )
+    if len(story_emotion_classes) < int(config.min_required_story_emotion_classes):
+        threshold_errors.append(
+            "Generated story records contain only "
+            f"{len(story_emotion_classes)} distinct non-neutral emotion labels; requires at least "
+            f"{int(config.min_required_story_emotion_classes)}"
+        )
+
+    if neutral_count < min_neutral_rows:
+        threshold_errors.append(
+            f"Generated only {neutral_count} neutral_dialogue rows; requires at least {min_neutral_rows}"
+        )
+
+    min_split_count = int(config.min_required_split_count_per_class)
+    if min_split_count > 0:
+        planned_split_counts: dict[tuple[str, str], Counter[str]] = {}
+        required_class_keys: list[tuple[str, str]] = [("neutral_dialogue", "neutral")]
+        required_class_keys.extend(("story", e) for e in emotions)
+        for source_type, emotion_label in required_class_keys:
+            planned_split_counts[(source_type, emotion_label)] = Counter(
+                str(t.record_template.get("split", ""))
+                for t in tasks
+                if str(t.record_template.get("source_type", "")) == source_type
+                and str(t.record_template.get("emotion_label", "")) == emotion_label
+            )
+        actual_split_counts: dict[tuple[str, str], Counter[str]] = {}
+        for source_type, emotion_label in required_class_keys:
+            actual_split_counts[(source_type, emotion_label)] = Counter(
+                str(r.get("split", ""))
+                for r in records
+                if str(r.get("source_type", "")) == source_type
+                and str(r.get("emotion_label", "")) == emotion_label
+            )
+        for class_key, planned_counter in planned_split_counts.items():
+            source_type, emotion_label = class_key
+            actual_counter = actual_split_counts.get(class_key, Counter())
+            for split_name in ("train", "val", "test"):
+                planned = int(planned_counter.get(split_name, 0))
+                if planned <= 0:
+                    continue
+                required = min(planned, min_split_count)
+                actual = int(actual_counter.get(split_name, 0))
+                if actual < required:
+                    threshold_errors.append(
+                        f"Post-drop split check failed for source_type={source_type}, emotion_label={emotion_label}, "
+                        f"split={split_name}: have {actual}, require at least {required}"
+                    )
+
     if not records:
         raise ArtError("Data generation produced zero records")
+
+    dropped_by_issue = Counter()
+    for row in dropped_rows:
+        issues = row.get("issues", [])
+        if isinstance(issues, list):
+            for issue in issues:
+                dropped_by_issue[str(issue)] += 1
+
+    if drop_summary_path is not None:
+        summary = {
+            "schema_version": SCHEMA_VERSION,
+            "event": "generation_qc_drop_summary_v1",
+            "generated_at": utc_now_iso(),
+            "total_items": int(total_items),
+            "retained_items": int(len(records)),
+            "dropped_count": int(dropped_count),
+            "dropped_pct": float(dropped_pct),
+            "dropped_by_source_type": dict(sorted((k, int(v)) for k, v in dropped_by_source.items())),
+            "dropped_by_emotion_label": dict(sorted((k, int(v)) for k, v in dropped_by_emotion.items())),
+            "dropped_by_reason": dict(sorted((k, int(v)) for k, v in dropped_by_issue.items())),
+            "threshold_errors": [str(x) for x in threshold_errors],
+        }
+        drop_summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with drop_summary_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(summary, ensure_ascii=True) + "\n")
+
+    if threshold_errors:
+        raise ArtError(threshold_errors[0])
+
     if progress_callback is not None:
         progress_callback(1.0, "Generation complete")
     return records

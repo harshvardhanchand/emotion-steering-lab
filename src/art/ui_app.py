@@ -16,7 +16,7 @@ from art.artifacts.read import read_json, read_jsonl
 from art.artifacts.write import write_json, write_jsonl
 from art.backends import SteeringIntervention, create_backend
 from art.constants import DEFAULT_MAX_LENGTH, EMOTION_WORDS, PAPER_MODE_NAME, TOPICS, project_root
-from art.data.generate import DataGenConfig, generate_probe_data
+from art.data.generate import DataGenConfig, generate_probe_data, generation_config_hash
 from art.errors import ArtError
 from art.probes.train import train_probe_artifact
 from art.repro import utc_now_iso
@@ -235,6 +235,42 @@ def _write_build_checkpoint(
     tmp.replace(path)
 
 
+def _single_metadata_hash(rows: list[dict[str, Any]], field: str) -> str:
+    values: set[str] = set()
+    for idx, row in enumerate(rows, start=1):
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ArtError(f"Cannot resume: probe_data[{idx}] missing metadata object")
+        value = str(metadata.get(field, "")).strip()
+        if not value:
+            raise ArtError(f"Cannot resume: probe_data[{idx}] missing metadata.{field}")
+        values.add(value)
+    if len(values) != 1:
+        raise ArtError(f"Cannot resume: probe_data contains multiple metadata.{field} values")
+    return next(iter(values))
+
+
+def _validate_resume_probe_data_integrity(*, rows: list[dict[str, Any]], cfg: DataGenConfig, model_hash: str) -> None:
+    expected_cfg_hash = generation_config_hash(
+        cfg,
+        topics=list(cfg.topics) if cfg.topics else list(TOPICS),
+        emotions=list(cfg.emotions) if cfg.emotions else list(EMOTION_WORDS),
+    )
+    actual_cfg_hash = _single_metadata_hash(rows, "generation_config_hash")
+    if actual_cfg_hash != expected_cfg_hash:
+        raise ArtError(
+            "Cannot resume: probe_data generation_config_hash mismatch. "
+            f"expected={expected_cfg_hash}, found={actual_cfg_hash}"
+        )
+
+    actual_model_hash = _single_metadata_hash(rows, "generation_model_hash")
+    if actual_model_hash != model_hash:
+        raise ArtError(
+            "Cannot resume: probe_data generation_model_hash mismatch. "
+            f"expected={model_hash}, found={actual_model_hash}"
+        )
+
+
 def _start_generate_train_job(
     *,
     job: dict[str, Any],
@@ -271,6 +307,7 @@ def _start_generate_train_job(
                 num_layers=int(train_num_layers) if cfg.backend_name == "mock" else None,
                 hidden_size=int(train_hidden_size) if cfg.backend_name == "mock" else None,
             )
+            backend_model_hash = backend.model_hash()
             rows: list[dict[str, Any]]
             if out_data.exists():
                 resumed = True
@@ -278,6 +315,7 @@ def _start_generate_train_job(
                 _set_job_progress(job, 0.52, "Found existing probe data. Validating for resume")
                 rows = read_jsonl(out_data)
                 validate_documents(rows, "probe_data.schema.json", context_prefix="probe_data")
+                _validate_resume_probe_data_integrity(rows=rows, cfg=cfg, model_hash=backend_model_hash)
                 _write_build_checkpoint(
                     checkpoint_path,
                     status="running",

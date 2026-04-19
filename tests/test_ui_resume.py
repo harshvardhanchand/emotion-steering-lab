@@ -63,8 +63,8 @@ def test_generate_train_resumes_from_existing_probe_data(monkeypatch, tmp_path: 
         cfg=cfg,
         out_data=out_data,
         out_artifact=out_artifact,
-        train_num_layers=8,
-        train_hidden_size=32,
+        train_num_layers=12,
+        train_hidden_size=64,
     )
     _wait_for_job(job)
 
@@ -80,3 +80,104 @@ def test_generate_train_resumes_from_existing_probe_data(monkeypatch, tmp_path: 
     assert bool(payload.get("resumed_from_existing_data")) is True
     assert str(payload.get("status")) == "completed"
 
+
+def test_generate_train_resume_rejects_config_hash_mismatch(monkeypatch, tmp_path: Path) -> None:
+    shutil.copytree(Path.cwd() / "schemas", tmp_path / "schemas")
+    monkeypatch.setenv("ART_PROJECT_ROOT", str(tmp_path))
+
+    out_data = tmp_path / "runs" / "resume_config_mismatch" / "probe_data.jsonl"
+    out_artifact = tmp_path / "runs" / "resume_config_mismatch" / "probe_artifact.json"
+    out_data.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = generate_probe_data(
+        DataGenConfig(
+            topics=TOPICS[:1],
+            emotions=EMOTION_WORDS[:2],
+            stories_per_topic_emotion=1,
+            dialogues_per_topic_emotion=0,
+            neutral_dialogues_per_topic=2,
+            seed=31,
+            backend_name="mock",
+            model_id="mock/model",
+            tokenizer_id="mock/tokenizer",
+            max_new_tokens=128,
+        )
+    )
+    write_jsonl(out_data, rows)
+
+    job = _new_build_job("generate_train")
+    cfg = DataGenConfig(
+        topics=TOPICS[:1],
+        emotions=EMOTION_WORDS[:2],
+        stories_per_topic_emotion=1,
+        dialogues_per_topic_emotion=0,
+        neutral_dialogues_per_topic=2,
+        seed=32,  # changed seed should trigger generation_config_hash mismatch on resume
+        backend_name="mock",
+        model_id="mock/model",
+        tokenizer_id="mock/tokenizer",
+        max_new_tokens=128,
+    )
+    _start_generate_train_job(
+        job=job,
+        cfg=cfg,
+        out_data=out_data,
+        out_artifact=out_artifact,
+        train_num_layers=12,
+        train_hidden_size=64,
+    )
+    _wait_for_job(job)
+
+    assert str(job.get("status")) == "error"
+    assert "generation_config_hash mismatch" in str(job.get("error", ""))
+
+
+def test_generate_train_resume_rejects_model_hash_mismatch(monkeypatch, tmp_path: Path) -> None:
+    shutil.copytree(Path.cwd() / "schemas", tmp_path / "schemas")
+    monkeypatch.setenv("ART_PROJECT_ROOT", str(tmp_path))
+
+    out_data = tmp_path / "runs" / "resume_model_mismatch" / "probe_data.jsonl"
+    out_artifact = tmp_path / "runs" / "resume_model_mismatch" / "probe_artifact.json"
+    out_data.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = generate_probe_data(
+        DataGenConfig(
+            topics=TOPICS[:1],
+            emotions=EMOTION_WORDS[:2],
+            stories_per_topic_emotion=1,
+            dialogues_per_topic_emotion=0,
+            neutral_dialogues_per_topic=2,
+            seed=31,
+            backend_name="mock",
+            model_id="mock/model",
+            tokenizer_id="mock/tokenizer",
+            max_new_tokens=128,
+        )
+    )
+    write_jsonl(out_data, rows)
+
+    job = _new_build_job("generate_train")
+    cfg = DataGenConfig(
+        topics=TOPICS[:1],
+        emotions=EMOTION_WORDS[:2],
+        stories_per_topic_emotion=1,
+        dialogues_per_topic_emotion=0,
+        neutral_dialogues_per_topic=2,
+        seed=31,
+        backend_name="mock",
+        model_id="mock/model",
+        tokenizer_id="mock/tokenizer",
+        max_new_tokens=128,
+    )
+    _start_generate_train_job(
+        job=job,
+        cfg=cfg,
+        out_data=out_data,
+        out_artifact=out_artifact,
+        train_num_layers=8,  # changed mock dimensions trigger generation_model_hash mismatch on resume
+        train_hidden_size=32,
+    )
+    _wait_for_job(job)
+
+    assert str(job.get("status")) == "error"
+    assert "generation_model_hash mismatch" in str(job.get("error", ""))
