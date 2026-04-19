@@ -51,6 +51,32 @@ export STREAMLIT_BROWSER_GATHER_USAGE_STATS="${STREAMLIT_BROWSER_GATHER_USAGE_ST
 echo "Syncing dependencies..."
 "$UV_BIN" sync --all-extras --no-editable --frozen
 
+CUDA_VERSION_RAW=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+  CUDA_VERSION_RAW="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]\+\.[0-9]\+\).*/\1/p' | head -n 1 || true)"
+fi
+
+TORCH_CHANNEL=""
+if [[ -n "$CUDA_VERSION_RAW" ]]; then
+  CUDA_MAJOR="${CUDA_VERSION_RAW%%.*}"
+  CUDA_MINOR="${CUDA_VERSION_RAW#*.}"
+  CUDA_MINOR="${CUDA_MINOR%%[^0-9]*}"
+  if [[ -n "$CUDA_MAJOR" && -n "$CUDA_MINOR" ]]; then
+    TORCH_CHANNEL="cu${CUDA_MAJOR}${CUDA_MINOR}"
+  fi
+fi
+
+if [[ -n "$TORCH_CHANNEL" ]]; then
+  CURRENT_TORCH_CHANNEL="$("$UV_BIN" run python -c "import torch; v=getattr(torch.version, 'cuda', None); print(('cu' + ''.join(v.split('.')[:2])) if v else '')" 2>/dev/null || true)"
+  if [[ "$CURRENT_TORCH_CHANNEL" != "$TORCH_CHANNEL" ]]; then
+    echo "Detected CUDA ${CUDA_VERSION_RAW}; aligning PyTorch wheels to ${TORCH_CHANNEL}..."
+    "$UV_BIN" run python -m ensurepip --upgrade >/dev/null 2>&1 || true
+    if ! "$UV_BIN" run python -m pip install --upgrade --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL}" torch torchvision torchaudio; then
+      echo "Warning: Failed to align PyTorch wheels for ${TORCH_CHANNEL}. Continuing with current install." >&2
+    fi
+  fi
+fi
+
 echo "Ensuring hf_transfer is available in the project environment..."
 if "$UV_BIN" run python -c "import hf_transfer" >/dev/null 2>&1; then
   export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-1}"
